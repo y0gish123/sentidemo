@@ -53,7 +53,7 @@ export default function App() {
       </div>
 
       {/* 4-panel grid */}
-      <div className='flex-grow grid grid-cols-2 grid-rows-2 gap-3 p-3' style={{ minHeight: 0 }}>
+      <div className='flex-grow grid grid-cols-2 grid-rows-2 gap-3 p-3 overflow-hidden'>
         <VideoPanel
           data={pipelineData.detection}
           isRunning={isRunning}
