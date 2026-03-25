@@ -1,45 +1,46 @@
 import React from 'react';
 
 export default function IncidentReport({ data }) {
-  const complete = data?.complete;
-  const t = data?.triage;
-  const d = data?.detection;
-  const disp = data?.dispatch;
+  const { detection, triage, dispatch, status } = data || {};
 
-  if (!complete) return null;
+  if (!dispatch && status !== 'NO_ACCIDENT') {
+    return (
+      <div className='bg-[#161B22] border border-[#30363D] rounded-lg p-3'>
+        <div className='text-xs font-semibold uppercase tracking-wider text-gray-500'>
+          Incident Report — Awaiting Data...
+        </div>
+      </div>
+    );
+  }
 
-  const severityColor = 
-    t?.severity_score >= 7 ? 'bg-red-900 text-red-300 border-red-500' :
-    t?.severity_score >= 4 ? 'bg-yellow-900 text-yellow-300 border-yellow-500' :
-    'bg-green-900 text-green-300 border-green-500';
+  const isCritical = triage?.severity_score >= 7;
+  const labelColor = status === 'NO_ACCIDENT' ? 'text-green-400' :
+                     isCritical ? 'text-red-400' :
+                     status === 'UNCERTAIN' ? 'text-yellow-400' : 'text-orange-400';
 
   return (
-    <div className='bg-[#161B22] border border-[#30363D] rounded-lg p-4 animate-fade-in transition-all'>
-      <div className='flex items-center justify-between'>
-        <div className='flex gap-6 items-center'>
-          <div>
-            <div className='text-xs text-gray-500 uppercase font-bold tracking-wider mb-1'>Incident ID</div>
-            <div className='font-mono text-gray-200'>{disp?.incident_id || 'N/A'}</div>
-          </div>
-          <div>
-            <div className='text-xs text-gray-500 uppercase font-bold tracking-wider mb-1'>Timestamp</div>
-            <div className='text-gray-200'>{d?.timestamp ? new Date(d.timestamp).toLocaleTimeString() : 'N/A'}</div>
-          </div>
-          <div>
-            <div className={`px-4 py-1 rounded border capitalize font-bold tracking-widest text-sm ${severityColor}`}>
-              {t?.severity_label || 'UNKNOWN'}
-            </div>
-          </div>
-        </div>
-        
-        <div className='text-right'>
-           <div className='text-xs text-gray-500 uppercase font-bold tracking-wider mb-1'>Coordinating Agents</div>
-           <div className='flex gap-2 justify-end'>
-              <span className='px-2 py-0.5 bg-[#0D1117] border border-[#30363D] text-xs text-gray-300 rounded'>Detection [YOLOv8]</span>
-              <span className='px-2 py-0.5 bg-[#0D1117] border border-[#30363D] text-xs text-gray-300 rounded'>Triage [Claude]</span>
-              <span className='px-2 py-0.5 bg-[#0D1117] border border-[#30363D] text-xs text-gray-300 rounded'>Dispatch</span>
-           </div>
-        </div>
+    <div className='bg-[#161B22] border border-[#30363D] rounded-lg p-3'>
+      <div className='text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2'>
+        Incident Report
+        {dispatch?.incident_id && (
+          <span className='ml-3 text-gray-600 font-mono normal-case'>#{dispatch.incident_id}</span>
+        )}
+      </div>
+      <div className='flex flex-wrap gap-x-6 gap-y-1 text-xs'>
+        <div><span className='text-gray-500'>Status: </span><span className={`font-bold ${labelColor}`}>{status || '—'}</span></div>
+        <div><span className='text-gray-500'>Time: </span><span className='text-gray-300'>{detection?.timestamp ? new Date(detection.timestamp).toLocaleTimeString() : '—'}</span></div>
+        <div><span className='text-gray-500'>GPS: </span><span className='text-gray-300 font-mono'>{detection?.gps_coordinates || '—'}</span></div>
+        <div><span className='text-gray-500'>Crash: </span><span className={detection?.crash_detected ? 'text-red-400 font-bold' : 'text-green-400'}>{detection?.crash_detected ? 'YES' : 'NO'}</span></div>
+        <div><span className='text-gray-500'>Confidence: </span><span className='text-gray-300'>{detection?.confidence != null ? `${(detection.confidence * 100).toFixed(0)}%` : '—'}</span></div>
+        {triage && <>
+          <div><span className='text-gray-500'>Severity: </span><span className={`font-bold ${labelColor}`}>{triage.severity_label} ({triage.severity_score}/10)</span></div>
+          <div className='w-full'><span className='text-gray-500'>Reasoning: </span><span className='text-gray-400'>{triage.triage_reasoning}</span></div>
+        </>}
+        {dispatch && <>
+          <div><span className='text-gray-500'>Services: </span><span className='text-gray-300'>{dispatch.services_dispatched?.join(', ') || '—'}</span></div>
+          <div><span className='text-gray-500'>EMS ETA: </span><span className='text-gray-300'>{dispatch.ems_eta_minutes} min</span></div>
+          <div><span className='text-gray-500'>Hospital: </span><span className={dispatch.hospital_notified ? 'text-blue-400' : 'text-gray-500'}>{dispatch.hospital_notified ? 'Notified' : 'Not Required'}</span></div>
+        </>}
       </div>
     </div>
   );

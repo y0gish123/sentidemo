@@ -8,7 +8,7 @@ import json
 import asyncio
 import os
 
-app = FastAPI(title='SENTINEL')
+app = FastAPI(title='SENTINEL AI')
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,6 +16,7 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*']
 )
+
 
 class ConnectionManager:
     def __init__(self):
@@ -36,55 +37,47 @@ class ConnectionManager:
             except Exception:
                 self.disconnect(connection)
 
+
 manager = ConnectionManager()
 
-async def run_pipeline_and_broadcast(video_path: str):
-    """Run the full CrewAI pipeline in background and stream results to all WS clients."""
-    from crew import run_sentinel_pipeline
 
-    await manager.broadcast({'type': 'log', 'message': f'[DETECTION] Initializing YOLO model and scanning: {video_path}'})
-
+async def _run_and_broadcast(video_path: str):
+    """Run pipeline in background thread, broadcast results."""
+    from pipeline import run_pipeline
     try:
-        # Run blocking pipeline in thread so we don't block the event loop
-        result = await asyncio.to_thread(run_sentinel_pipeline, video_path, manager=manager)
-
-        # Broadcast each agent's result individually
-        await manager.broadcast({'type': 'log', 'message': '[DETECTION] YOLO scan complete. Crash analysis done.'})
-        await manager.broadcast({'type': 'log', 'message': f'[TRIAGE] Severity: {result.get("severity_label","?")} | Score: {result.get("severity_score","?")}'})
-        await manager.broadcast({'type': 'log', 'message': f'[DISPATCH] Incident ID: {result.get("incident_id","?")} | EMS ETA: {result.get("ems_eta_minutes","?")} min'})
-        await manager.broadcast({'type': 'log', 'message': f'[DISPATCH] Services: {", ".join(result.get("services_dispatched",[]))}'})
-
-        # Broadcast the final complete structured result
-        await manager.broadcast({'type': 'result', 'data': result})
-
-        # Persist
+        result = await run_pipeline(video_path, manager=manager)
+        # Persist to database (non-critical)
         try:
             save_incident(result)
-        except Exception as db_err:
-            print(f"DB save failed (non-critical): {db_err}")
-
+        except Exception as e:
+            print(f"[DB] Non-critical save error: {e}")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        await manager.broadcast({'type': 'error', 'message': f'Pipeline error: {str(e)}'})
+        await manager.broadcast({'type': 'error', 'message': str(e)})
 
 
-@app.post('/api/simulate')
-async def simulate_crash(background_tasks: BackgroundTasks):
-    """Trigger the pipeline. Results stream via WebSocket."""
-    background_tasks.add_task(run_pipeline_and_broadcast, 'demo_videos/crash_sample.mp4')
-    return {'status': 'Pipeline started. Listen on WebSocket /ws/pipeline for events.'}
+@app.post('/api/start')
+async def start_monitoring(background_tasks: BackgroundTasks):
+    """Trigger pipeline with demo video. Results stream via WebSocket."""
+    video_path = 'demo_videos/crash_sample.mp4'
+    if not os.path.exists(video_path):
+        return {'status': 'error', 'message': f'Demo video not found at {video_path}'}
+    background_tasks.add_task(_run_and_broadcast, video_path)
+    return {'status': 'started', 'message': 'Pipeline started. Listen on /ws/pipeline.'}
 
 
 @app.post('/api/upload-video')
 async def upload_video(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
-    import os
+    """Accept any uploaded MP4 and run detection pipeline on it."""
     os.makedirs('uploads', exist_ok=True)
-    path = f'uploads/{file.filename}'
+    # Sanitize filename
+    safe_name = os.path.basename(file.filename or 'uploaded.mp4')
+    path = f'uploads/{safe_name}'
+    contents = await file.read()
     with open(path, 'wb') as f:
-        f.write(await file.read())
-    background_tasks.add_task(run_pipeline_and_broadcast, path)
-    return {'status': f'Processing {file.filename}. Listen on WebSocket.'}
+        f.write(contents)
+    if background_tasks:
+        background_tasks.add_task(_run_and_broadcast, path)
+    return {'status': 'started', 'message': f'Processing {safe_name}. Listen on /ws/pipeline.'}
 
 
 @app.get('/api/incidents')
@@ -94,21 +87,17 @@ async def fetch_incidents():
 
 @app.get('/api/stream-video')
 async def stream_video():
-    """Serve the crash demo video with proper Content-Type for browser playback."""
+    """Serve demo video with proper Content-Type for browser playback."""
     video_path = 'demo_videos/crash_sample.mp4'
     if not os.path.exists(video_path):
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Video not found")
-    return FileResponse(
-        video_path,
-        media_type='video/mp4',
-        headers={"Accept-Ranges": "bytes"}
-    )
+        raise HTTPException(status_code=404, detail='Demo video not found. Add crash_sample.mp4 to demo_videos/')
+    return FileResponse(video_path, media_type='video/mp4', headers={"Accept-Ranges": "bytes"})
 
 
 @app.get('/api/health')
 async def health_check():
-    return {"status": "ok"}
+    return {'status': 'ok', 'model': 'gemini-2.5-flash', 'database': 'mongodb'}
 
 
 @app.websocket('/ws/pipeline')

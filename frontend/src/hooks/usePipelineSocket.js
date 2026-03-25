@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+const INITIAL_STATE = {
+  agentEvents: [],
+  detection: null,
+  triage: null,
+  dispatch: null,
+  status: null,
+  complete: false
+};
+
 export function usePipelineSocket() {
-  const [pipelineData, setPipelineData] = useState({
-    agentEvents: [],
-    detection: null,
-    triage: null,
-    dispatch: null,
-    complete: false
-  });
+  const [pipelineData, setPipelineData] = useState(INITIAL_STATE);
   const [isRunning, setIsRunning] = useState(false);
   const ws = useRef(null);
 
@@ -20,41 +23,50 @@ export function usePipelineSocket() {
           const data = JSON.parse(event.data);
 
           if (data.type === 'log' || data.type === 'event') {
-            // Append live agent log messages
             setPipelineData(prev => ({
               ...prev,
-              agentEvents: [...prev.agentEvents, { time: new Date().toLocaleTimeString(), text: data.message }]
+              agentEvents: [...prev.agentEvents, {
+                time: new Date().toLocaleTimeString(),
+                text: data.message
+              }]
             }));
 
           } else if (data.type === 'result') {
-            // Pipeline complete — unpack all structured fields
-            const result = data.data;
+            const r = data.data;
             setPipelineData(prev => ({
               ...prev,
+              status: r.status,
               detection: {
-                crash_detected: result.crash_detected,
-                frame_number: result.frame_number,
-                gps_coordinates: result.gps_coordinates,
-                timestamp: result.timestamp
+                crash_detected: r.crash_detected,
+                confidence: r.confidence,
+                vehicles_detected: r.vehicles_detected,
+                frame_number: r.frame_number,
+                gps_coordinates: r.gps_coordinates,
+                timestamp: r.timestamp
               },
-              triage: {
-                severity_score: result.severity_score,
-                severity_label: result.severity_label,
-                triage_reasoning: result.triage_reasoning
-              },
-              dispatch: {
-                services_dispatched: result.services_dispatched,
-                ems_eta_minutes: result.ems_eta_minutes,
-                alert_message: result.alert_message,
-                hospital_notified: result.hospital_notified,
-                hospital_message: result.hospital_message,
-                reroute_suggestion: result.reroute_suggestion,
-                incident_id: result.incident_id
-              },
+              triage: r.crash_detected ? {
+                severity_score: r.severity_score,
+                severity_label: r.severity_label,
+                triage_reasoning: r.triage_reasoning
+              } : null,
+              dispatch: r.crash_detected ? {
+                services_dispatched: r.services_dispatched,
+                ems_eta_minutes: r.ems_eta_minutes,
+                alert_message: r.alert_message,
+                hospital_notified: r.hospital_notified,
+                hospital_message: r.hospital_message,
+                reroute_suggestion: r.reroute_suggestion,
+                incident_id: r.incident_id
+              } : null,
               complete: true,
               agentEvents: [
                 ...prev.agentEvents,
-                { time: new Date().toLocaleTimeString(), text: '✅ SENTINEL Pipeline Complete.' }
+                {
+                  time: new Date().toLocaleTimeString(),
+                  text: r.status === 'NO_ACCIDENT'
+                    ? '✅ Scan complete — No accident detected.'
+                    : `✅ Pipeline complete — Incident: ${r.incident_id}`
+                }
               ]
             }));
             setIsRunning(false);
@@ -62,52 +74,56 @@ export function usePipelineSocket() {
           } else if (data.type === 'error') {
             setPipelineData(prev => ({
               ...prev,
-              agentEvents: [...prev.agentEvents, { time: new Date().toLocaleTimeString(), text: `❌ ${data.message}` }]
+              agentEvents: [...prev.agentEvents, {
+                time: new Date().toLocaleTimeString(),
+                text: `❌ ${data.message}`
+              }]
             }));
             setIsRunning(false);
           }
-        } catch (e) {
-          // Raw text fallback
+        } catch {
           setPipelineData(prev => ({
             ...prev,
-            agentEvents: [...prev.agentEvents, { time: new Date().toLocaleTimeString(), text: event.data }]
+            agentEvents: [...prev.agentEvents, {
+              time: new Date().toLocaleTimeString(),
+              text: event.data
+            }]
           }));
         }
       };
 
-      ws.current.onclose = () => {
-        setTimeout(connectWS, 3000);
-      };
+      ws.current.onclose = () => setTimeout(connectWS, 3000);
     };
 
     connectWS();
-
-    return () => {
-      if (ws.current) ws.current.close();
-    };
+    return () => { if (ws.current) ws.current.close(); };
   }, []);
 
-  const triggerPipeline = useCallback(async () => {
+  const triggerPipeline = useCallback(async (endpoint = '/api/start', options = {}) => {
     setIsRunning(true);
     setPipelineData({
-      agentEvents: [{ time: new Date().toLocaleTimeString(), text: '🚀 Starting SENTINEL Pipeline...' }],
-      detection: null,
-      triage: null,
-      dispatch: null,
-      complete: false
+      ...INITIAL_STATE,
+      agentEvents: [{ time: new Date().toLocaleTimeString(), text: '🚀 Starting SENTINEL Pipeline...' }]
     });
-
     try {
-      // Just fire and forget — results come back via WebSocket
-      await fetch('http://localhost:8000/api/simulate', { method: 'POST' });
-    } catch (e) {
+      await fetch(`http://localhost:8000${endpoint}`, { method: 'POST', ...options });
+    } catch {
       setPipelineData(prev => ({
         ...prev,
-        agentEvents: [...prev.agentEvents, { time: new Date().toLocaleTimeString(), text: '❌ Error: Cannot reach backend.' }]
+        agentEvents: [...prev.agentEvents, {
+          time: new Date().toLocaleTimeString(),
+          text: '❌ Cannot reach backend. Is the server running?'
+        }]
       }));
       setIsRunning(false);
     }
   }, []);
 
-  return { pipelineData, triggerPipeline, isRunning };
+  const uploadAndAnalyze = useCallback(async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    await triggerPipeline('/api/upload-video', { body: formData });
+  }, [triggerPipeline]);
+
+  return { pipelineData, triggerPipeline, uploadAndAnalyze, isRunning };
 }
