@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+crewai
+anthropic
+ultralytics
+opencv-python
+pymongo
+python-multipart
+pydantic
+python-dotenv
+websockets
